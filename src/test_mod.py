@@ -43,41 +43,29 @@ class MAVLinkTester:
             print(f"No ACK received for command {command}")
             return None
 
-    def monitor(self, duration=1, types=['VFR_HUD', 'SYS_STATUS', 'HEARTBEAT']):
-        # Print out specified messages for a short duration
-        print(f"Monitoring for {duration}s (focus: {', '.join(types)})...")
-        start = time.time()
-        while time.time() - start < duration:
-            msg = self.m.recv_match(blocking=True, timeout=1)
-            if msg and msg.get_type() in types:
-                print(f"{msg.get_type()}: {msg}")
-
-    def test_continuous_throttle(self, channel, pwm, duration=5):
+    def press_button_and_watch(self, channel, pwm_active, pwm_default, duration):
         """
-        Sends RC_CHANNELS_OVERRIDE repeatedly to simulate a joystick.
-        This is the correct way to test throttle.
+        Sends a specific PWM value on one channel while holding all others at default.
+        Monitors ALL incoming MAVLink messages for ANY change.
         """
-        print(f"\n--- TESTING CONTINUOUS THROTTLE (Channel {channel}={pwm} for {duration}s) ---")
-        print("Looking for VFR_HUD.throttle > 0...")
+        print(f"\n--- PRESSING BUTTON (Ch{channel}={pwm_active}) for {duration}s ---")
+        print("--- Monitoring ALL messages for ANY field changes... ---")
         
-        # Set up the override array. Channel 3 is throttle (index 2).
-        overrides = [0] * 8  # 8 channels, all 0
-        if 1 <= channel <= 8:
-            # NOTE: Try all channels to make sure for the throttle test
-            overrides[0] = pwm # Channel 1
-            overrides[1] = pwm # Channel 2
-            overrides[2] = pwm # Channel 3
-            overrides[3] = pwm # Channel 4
-        else:
-            print("Invalid channel (1-8 only).")
-            return
+        # Set up the override array with all channels at default
+        overrides = [pwm_default] * 18
+        # Set the specific channel to its "active" value
+        overrides[channel - 1] = pwm_active
 
         start_time = time.time()
-        send_interval = 0.1 # Send 10 times per second (1.0 / 10)
+        send_interval = 0.05  # Send 20 times per second (50ms)
         last_send_time = 0
-        success = False
-
-        # Loop for the specified duration
+        
+        # This dictionary will store the last known state of every message type
+        previous_messages = {}
+        
+        # These fields always change and are not interesting (noise)
+        ignore_fields = ['time_boot_ms', 'time_usec', 'airspeed', 'time_unix_usec', 'uptime', 'seq']
+        
         while time.time() - start_time < duration:
             current_time = time.time()
             
@@ -86,54 +74,103 @@ class MAVLinkTester:
                 self.m.mav.rc_channels_override_send(1, 1, *overrides)
                 last_send_time = current_time
 
-            # 2. Listen for VFR_HUD messages at the same time
-            msg = self.m.recv_match(type='VFR_HUD', blocking=False)
-            if msg:
-                # Print any VFR_HUD message we receive
-                print(f"VFR_HUD: {msg}")
-                # Check if the throttle field is non-zero
-                if msg.throttle > 0:
-                    success = True
-            
-            time.sleep(0.01) # Small sleep to prevent 100% CPU usage
+            # 2. Listen for ANY message
+            msg = self.m.recv_match(blocking=False)
+            if msg and msg.get_type() != 'BAD_DATA':
+                msg_type = msg.get_type()
+                
+                if msg_type not in previous_messages:
+                    # First time seeing this message type
+                    print(f"[FIRST SIGHTING] {msg_type}: {msg}")
+                    previous_messages[msg_type] = msg
+                else:
+                    # We have seen this message before, let's compare
+                    old_msg_dict = previous_messages[msg_type].to_dict()
+                    new_msg_dict = msg.to_dict()
+                    
+                    for key, new_val in new_msg_dict.items():
+                        if key in ignore_fields or key == 'mavpackettype':
+                            continue
+                        
+                        old_val = old_msg_dict.get(key)
+                        
+                        # Use float-safe comparison if needed
+                        is_different = False
+                        if isinstance(new_val, float):
+                            if abs(new_val - old_val) > 0.001:
+                                is_different = True
+                        elif old_val != new_val:
+                            is_different = True
 
-        # 3. After the loop, send a command to clear all overrides
-        self.m.mav.rc_channels_override_send(1, 1, *([0]*8))
-        print("--- Continuous override test finished. Clearing channels. ---")
-        
-        # 4. Print the final result
-        if success:
-            print(">>> SUCCESS: Throttle value was observed > 0. <<<")
-        else:
-            print(">>> FAILURE: Throttle value remained 0. <<<")
-        
-        return success
+                        if is_different:
+                            print(f"+++ CHANGE DETECTED [{msg_type}] -> {key}: FROM {old_val} TO {new_val} +++")
+                            
+                    # Update the snapshot
+                    previous_messages[msg_type] = msg
+
+            time.sleep(0.01)  # Prevent 100% CPU usage
+
+        # 3. After the loop, send a command to clear all overrides back to default
+        self.m.mav.rc_channels_override_send(1, 1, *([pwm_default]*18))
+        print(f"--- Button Released (Ch{channel}={pwm_default}) ---")
+
 
 # --- Main execution block ---
 if __name__ == "__main__":
     try:
         tester = MAVLinkTester()
         
+        DEFAULT_PWM = 1500
+        ACTIVE_PWM = 1000
+        BUTTON_CHANNEL = 6
+        
         print("\nAttempting to ARM (command 400, param1=1)...")
-        # Send MAV_CMD_COMPONENT_ARM_DISARM (400) with param1=1 (arm)
         arm_result = tester.send_command(400, (1, 0, 0, 0, 0, 0, 0))
         
         if arm_result == 0: # 0 = MAV_RESULT_ACCEPTED
-            print("\nVehicle is ARMED. Now testing continuous throttle...")
+            print("\nVehicle is ARMED. Beginning button press sequence.")
             
-            # Test throttle (channel 3) at 1600 PWM for 10 seconds
-            # This is the test for "giving it forward"
-            tester.test_continuous_throttle(channel=3, pwm=1600, duration=10)
+            # Send neutral signal for 1 second to establish baseline
+            print("\n--- Sending NEUTRAL (1500) on all channels for 1s ---")
+            tester.m.mav.rc_channels_override_send(1, 1, *([DEFAULT_PWM]*18))
+            time.sleep(1)
+
+            # --- 1. LONG PRESS A ---
+            tester.press_button_and_watch(
+                channel=BUTTON_CHANNEL, 
+                pwm_active=ACTIVE_PWM, 
+                pwm_default=DEFAULT_PWM, 
+                duration=3  # "Long press" for 3 seconds
+            )
+            
+            # Wait for 1 second in neutral state
+            print("\n--- Holding NEUTRAL for 1s ---")
+            tester.m.mav.rc_channels_override_send(1, 1, *([DEFAULT_PWM]*18))
+            time.sleep(1)
+
+            # --- 2. SHORT PRESS A ---
+            tester.press_button_and_watch(
+                channel=BUTTON_CHANNEL, 
+                pwm_active=ACTIVE_PWM, 
+                pwm_default=DEFAULT_PWM, 
+                duration=0.5 # "Short press" for 0.5 seconds
+            )
+            
+            # Wait for 1 second in neutral state
+            print("\n--- Holding NEUTRAL for 1s ---")
+            tester.m.mav.rc_channels_override_send(1, 1, *([DEFAULT_PWM]*18))
+            time.sleep(1)
+
+            print("\nButton press sequence complete.")
             
         else:
-            print(f"\nDid not arm (Result: {arm_result}). Skipping throttle test.")
+            print(f"\nDid not arm (Result: {arm_result}). Skipping button test.")
 
         print("\nAttempting to DISARM (command 400, param1=0)...")
-        # Send MAV_CMD_COMPONENT_ARM_DISARM (400) with param1=0 (disarm)
         tester.send_command(400, (0, 0, 0, 0, 0, 0, 0))
         
         print("\nFinal status check:")
-        tester.monitor(duration=1)
+        tester.monitor(duration=1, types=['HEARTBEAT'])
 
     except Exception as e:
         print(f"An error occurred: {e}")
