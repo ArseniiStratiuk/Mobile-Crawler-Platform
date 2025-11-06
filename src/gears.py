@@ -8,12 +8,12 @@ SERIAL_PORT = '/dev/ttyS0'
 BAUD_RATE = 57600
 
 # Канали RC (з інформації від ментора)
-THROTTLE_CHANNEL = 3  # 3 канал вперед-назад
+THROTTLE_CHANNEL = 6  # 6 канал вперед-назад
 STEER_CHANNEL = 1     # 1 канал вліво-вправо
 
 # Значення PWM (з "default 1500")
 NEUTRAL_PWM = 1500
-FORWARD_PWM = 1700
+FORWARD_PWM = 2000
 BACKWARD_PWM = 1300
 LEFT_PWM = 1300
 RIGHT_PWM = 1700
@@ -45,6 +45,7 @@ class RoverController:
         
         self.running = True
         self.override_thread = threading.Thread(target=self._rc_override_loop, daemon=True)
+        self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
 
     def _rc_override_loop(self):
         """
@@ -67,6 +68,58 @@ class RoverController:
                 *overrides
             )
             time.sleep(0.1) # Надсилаємо 10 разів на секунду
+
+    def _heartbeat_loop(self):
+        """
+        Ця функція працює у фоновому потоці.
+        Вона БЕЗПЕРЕРВНО надсилає HEARTBEAT повідомлення раз на секунду.
+        Це необхідно для підтримки з'єднання з автопілотом.
+        """
+        while self.running:
+            self.master.mav.heartbeat_send(
+                mavutil.mavlink.MAV_TYPE_GCS,
+                mavutil.mavlink.MAV_AUTOPILOT_INVALID,
+                0,  # base_mode
+                0,  # custom_mode
+                0   # system_status
+            )
+            time.sleep(1.0)  # Надсилаємо 1 раз на секунду
+
+    def send_throttle_pulse(self, channel, pwm_value, duration):
+        """Надсилає певне значення PWM на вказаний канал протягом заданого часу."""
+        print(f"Sending PWM {pwm_value} on channel {channel} for {duration}s...")
+        
+        start_time = time.time()
+        send_interval = 0.05  # Надсилаємо 20 разів на секунду
+        last_send_time = 0
+        
+        while time.time() - start_time < duration:
+            current_time = time.time()
+            
+            if current_time - last_send_time >= send_interval:
+                # Створюємо масив з 18 каналів, заповнений NEUTRAL_PWM
+                overrides = [NEUTRAL_PWM] * 18
+                
+                # Встановлюємо значення на вказаному каналі
+                overrides[channel - 1] = pwm_value
+                
+                # Надсилаємо RC_CHANNELS_OVERRIDE
+                self.master.mav.rc_channels_override_send(
+                    self.master.target_system,
+                    self.master.target_component,
+                    *overrides
+                )
+                last_send_time = current_time
+            
+            time.sleep(0.01)  # Запобігаємо 100% завантаженню CPU
+        
+        # Після завершення повертаємо всі канали до нейтрального стану
+        self.master.mav.rc_channels_override_send(
+            self.master.target_system,
+            self.master.target_component,
+            *([NEUTRAL_PWM] * 18)
+        )
+        print(f"PWM pulse completed, channels reset to neutral.")
 
     def _send_button_press(self, button_bitmask):
         """Надсилає ОДНЕ повідомлення MANUAL_CONTROL (69) для імітації натискання кнопки."""
@@ -125,7 +178,10 @@ class RoverController:
 
     def gear_up(self):
         if self.current_gear < 3:
-            self._send_button_press(GEAR_UP_BIT)
+            print("Shifting GEAR UP (Ch6: 2000 -> 1500)")
+            # Send 2000 on channel 6 for 0.5 seconds
+            self.send_throttle_pulse(channel=6, pwm_value=2000, duration=0.5)
+            # Then automatically returns to 1500 (neutral)
             self.current_gear += 1
             print(f"Current Gear: {self.current_gear}")
         else:
@@ -133,7 +189,10 @@ class RoverController:
 
     def gear_down(self):
         if self.current_gear > 0:
-            self._send_button_press(GEAR_DOWN_BIT)
+            print("Shifting GEAR DOWN (Ch6: 1000 -> 1500)")
+            # Send 1000 on channel 6 for 0.5 seconds
+            self.send_throttle_pulse(channel=6, pwm_value=1000, duration=0.5)
+            # Then automatically returns to 1500 (neutral)
             self.current_gear -= 1
             print(f"Current Gear: {self.current_gear}")
         else:
@@ -163,6 +222,9 @@ class RoverController:
         elif cmd == 'q':
             print("GEAR DOWN")
             self.gear_down()
+        elif cmd == 'test':
+            print("TEST: Sending PWM 2000 on channel 6 for 1 second")
+            self.send_throttle_pulse(channel=6, pwm_value=2000, duration=1.0)
         elif cmd == 'quit':
             print("Quitting...")
             self.running = False
@@ -178,6 +240,9 @@ class RoverController:
         # Запускаємо фоновий потік для RC_CHANNELS_OVERRIDE
         self.override_thread.start()
         
+        # Запускаємо фоновий потік для HEARTBEAT
+        self.heartbeat_thread.start()
+        
         print("\n--- Rover Control Ready ---")
         print(" w = Forward")
         print(" s = Backward")
@@ -185,6 +250,7 @@ class RoverController:
         print(" d = Right")
         print(" e = Gear Up")
         print(" q = Gear Down")
+        print(" test = Test throttle (Ch6=2000 for 1s)")
         print(" stop = STOP")
         print(" quit = Disarm and Exit")
         print(" (Ctrl+D = Disarm and Exit)")
@@ -209,6 +275,8 @@ class RoverController:
         self.running = False
         if self.override_thread.is_alive():
             self.override_thread.join()
+        if self.heartbeat_thread.is_alive():
+            self.heartbeat_thread.join()
         
         # Встановлюємо нейтральні значення перед дизармом
         self.throttle_pwm = NEUTRAL_PWM
