@@ -39,13 +39,43 @@ class RoverController:
         print("Vehicle connected!")
 
         # Поточний стан керування
-        self.current_gear = 0
         self.throttle_pwm = NEUTRAL_PWM
         self.steer_pwm = NEUTRAL_PWM
+
+        self.current_gear = None
+        self.message_listener_thread = threading.Thread(target=self._message_listener_loop, daemon=True)
         
         self.running = True
         self.override_thread = threading.Thread(target=self._rc_override_loop, daemon=True)
         self.heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+    
+    def _message_listener_loop(self):
+        """
+        (НОВИЙ ПОТІК)
+        Цей потік слухає вхідні повідомлення MAVLink у фоні.
+        Він шукає ESTIMATOR_STATUS, щоб отримати vel_ratio.
+        """
+        print("Starting message listener thread...")
+        msg = 0
+        while self.running:
+            # Ми чекаємо (blocking=True) на повідомлення типу ESTIMATOR_STATUS.
+            # Якщо повідомлення не прийде за 1.0 секунду (timeout),
+            # цикл просто повториться. Це ефективно і не вантажить CPU.
+            msg = self.master.recv_match(
+                type='ESTIMATOR_STATUS', 
+                blocking=True, 
+                timeout=1.0
+            )
+            
+            if not msg:
+                # Таймаут, повідомлення не надійшло, просто продовжуємо цикл
+                continue
+
+            if msg.vel_ratio != self.current_gear:
+                print(f"\nGEAR UPDATE: {self.current_gear} -> {msg.vel_ratio}")
+                self.current_gear = msg.vel_ratio
+        print(msg)
+
 
     def _rc_override_loop(self):
         """
@@ -85,36 +115,45 @@ class RoverController:
             )
             time.sleep(1.0)  # Надсилаємо 1 раз на секунду
 
-    def send_gear_signal(self, pwm_value):
-        """Надсилає сигнал для зміни передачі на каналі 6."""
-        print(f"Sending gear signal: PWM {pwm_value} on channel 6")
+    def send_pwm_pulse(self, channel_number, pwm_value, duration_sec=0.7):
+        """
+        (НОВА ФУНКЦІЯ)
+        Надсилає імпульс PWM на вказаний канал протягом певного часу.
+        Інші канали під час імпульсу будуть в NEUTRAL_PWM (1500).
+        """
+        print(f"Sending PWM pulse: {pwm_value} on Channel {channel_number} for {duration_sec}s")
         
-        # Надсилаємо PWM значення на канал 6 безперервно протягом 0.51 секунди
+        # Створюємо масив з NEUTRAL_PWM (1500)
+        overrides = [NEUTRAL_PWM] * 18 
+        
+        # Встановлюємо цільове значення PWM (пам'ятаємо про індексацію з 0)
+        overrides[channel_number - 1] = pwm_value
+        
+        # Масив для повернення до нейтрального стану (всі 1500)
+        neutral_overrides = [NEUTRAL_PWM] * 18
+
         start_time = time.time()
         send_interval = 0.05  # Надсилаємо 20 разів на секунду
         last_send_time = 0
         
-        while time.time() - start_time < 0.7:
+        while time.time() - start_time < duration_sec:
             current_time = time.time()
-            
             if current_time - last_send_time >= send_interval:
-                # Використовуємо 0 для всіх інших каналів (без override)
                 self.master.mav.rc_channels_override_send(
                     self.master.target_system,
                     self.master.target_component,
-                    0, 0, 0, 0, 0, pwm_value, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                    *overrides
                 )
                 last_send_time = current_time
-            
-            time.sleep(0.01)  # Запобігаємо 100% завантаженню CPU
+            time.sleep(0.01) # Запобігаємо 100% завантаженню CPU
         
-        # Повертаємо канал 6 до нейтрального стану (1500)
+        # Повертаємо всі канали до NEUTRAL
         self.master.mav.rc_channels_override_send(
             self.master.target_system,
             self.master.target_component,
-            0, 0, 0, 0, 0, NEUTRAL_PWM, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            *neutral_overrides
         )
-        print(f"Gear signal completed, channel 6 reset to {NEUTRAL_PWM}")
+        print(f"Pulse complete. Channel {channel_number} reset to {NEUTRAL_PWM}.")
 
     def _send_button_press(self, button_bitmask):
         """Надсилає ОДНЕ повідомлення MANUAL_CONTROL (69) для імітації натискання кнопки."""
@@ -173,15 +212,27 @@ class RoverController:
 
     def gear_up(self):
         print("Shifting GEAR UP")
-        self.send_gear_signal(2000)
-        self.current_gear += 1
-        print(f"Current Gear: {self.current_gear}")
+        self.send_pwm_pulse(channel_number=6, pwm_value=2000, duration_sec=0.7)
 
     def gear_down(self):
         print("Shifting GEAR DOWN")
-        self.send_gear_signal(1000)
-        self.current_gear -= 1
-        print(f"Current Gear: {self.current_gear}")
+        #ne pracuye
+        if self.current_gear == 0.0:
+            # --- НОВА ЛОГІКА ДЛЯ РЕВЕРСУ ---
+            print("Поточна передача 0. Вмикаємо РЕВЕРС (Канал 3)...")
+            # Надсилаємо сигнал на Канал 3, PWM 1000
+            self.send_pwm_pulse(channel_number=3, pwm_value=1000, duration_sec=0.7)
+            # Очікуємо, що танк повідомить про vel_ratio -1.0
+            
+        elif self.current_gear > 0.0:
+            # --- СТАРА ЛОГІКА (звичайне зниження) ---
+            print(f"Поточна передача {self.current_gear}. Знижуємо (Канал 6)...")
+            # Надсилаємо сигнал на Канал 6, PWM 1000
+            self.send_pwm_pulse(channel_number=6, pwm_value=1000, duration_sec=0.7)
+        
+        else:
+            # Це означає, що ми вже в реверсі (наприклад, -1.0)
+            print(f"Вже в режимі реверсу або неможлива передача ({self.current_gear}). Дій немає.")
 
     def process_command(self, cmd):
         """Обробляє введені користувачем команди."""
@@ -207,9 +258,11 @@ class RoverController:
         elif cmd == 'q':
             print("GEAR DOWN")
             self.gear_down()
+        elif cmd == 'gear':
+            print(f"Current reported gear: {self.current_gear}")
         elif cmd == 'test':
             print("TEST: Sending gear up signal")
-            self.send_gear_signal(2000)
+            self.send_pwm_pulse(channel_number=6, pwm_value=2000, duration_sec=0.7)
         elif cmd == 'quit':
             print("Quitting...")
             self.running = False
@@ -227,6 +280,9 @@ class RoverController:
         
         # Запускаємо фоновий потік для HEARTBEAT
         self.heartbeat_thread.start()
+
+        # Запускаємо фоновий потік для прослуховування повідомлень
+        self.message_listener_thread.start()
         
         print("\n--- Rover Control Ready ---")
         print(" w = Forward")
@@ -235,6 +291,7 @@ class RoverController:
         print(" d = Right")
         print(" e = Gear Up")
         print(" q = Gear Down")
+        print(" gear = Show current gear")
         print(" test = Test gear signal (Ch6: 2000->1500)")
         print(" stop = STOP")
         print(" quit = Disarm and Exit")
@@ -262,6 +319,8 @@ class RoverController:
             self.override_thread.join()
         if self.heartbeat_thread.is_alive():
             self.heartbeat_thread.join()
+        if self.message_listener_thread.is_alive():
+            self.message_listener_thread.join()
         
         # Встановлюємо нейтральні значення перед дизармом
         self.throttle_pwm = NEUTRAL_PWM
