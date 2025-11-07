@@ -85,41 +85,36 @@ class RoverController:
             )
             time.sleep(1.0)  # Надсилаємо 1 раз на секунду
 
-    def send_throttle_pulse(self, channel, pwm_value, duration):
-        """Надсилає певне значення PWM на вказаний канал протягом заданого часу."""
-        print(f"Sending PWM {pwm_value} on channel {channel} for {duration}s...")
+    def send_gear_signal(self, pwm_value):
+        """Надсилає сигнал для зміни передачі на каналі 6."""
+        print(f"Sending gear signal: PWM {pwm_value} on channel 6")
         
+        # Надсилаємо PWM значення на канал 6 безперервно протягом 0.51 секунди
         start_time = time.time()
         send_interval = 0.05  # Надсилаємо 20 разів на секунду
         last_send_time = 0
         
-        while time.time() - start_time < duration:
+        while time.time() - start_time < 0.7:
             current_time = time.time()
             
             if current_time - last_send_time >= send_interval:
-                # Створюємо масив з 18 каналів, заповнений NEUTRAL_PWM
-                overrides = [NEUTRAL_PWM] * 18
-                
-                # Встановлюємо значення на вказаному каналі
-                overrides[channel - 1] = pwm_value
-                
-                # Надсилаємо RC_CHANNELS_OVERRIDE
+                # Використовуємо 0 для всіх інших каналів (без override)
                 self.master.mav.rc_channels_override_send(
                     self.master.target_system,
                     self.master.target_component,
-                    *overrides
+                    0, 0, 0, 0, 0, pwm_value, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
                 )
                 last_send_time = current_time
             
             time.sleep(0.01)  # Запобігаємо 100% завантаженню CPU
         
-        # Після завершення повертаємо всі канали до нейтрального стану
+        # Повертаємо канал 6 до нейтрального стану (1500)
         self.master.mav.rc_channels_override_send(
             self.master.target_system,
             self.master.target_component,
-            *([NEUTRAL_PWM] * 18)
+            0, 0, 0, 0, 0, NEUTRAL_PWM, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
         )
-        print(f"PWM pulse completed, channels reset to neutral.")
+        print(f"Gear signal completed, channel 6 reset to {NEUTRAL_PWM}")
 
     def _send_button_press(self, button_bitmask):
         """Надсилає ОДНЕ повідомлення MANUAL_CONTROL (69) для імітації натискання кнопки."""
@@ -177,26 +172,16 @@ class RoverController:
         print(f"DISARMED. ACK: {ack}")
 
     def gear_up(self):
-        if self.current_gear < 3:
-            print("Shifting GEAR UP (Ch6: 2000 -> 1500)")
-            # Send 2000 on channel 6 for 0.5 seconds
-            self.send_throttle_pulse(channel=6, pwm_value=2000, duration=0.5)
-            # Then automatically returns to 1500 (neutral)
-            self.current_gear += 1
-            print(f"Current Gear: {self.current_gear}")
-        else:
-            print("Already in highest gear (3)")
+        print("Shifting GEAR UP")
+        self.send_gear_signal(2000)
+        self.current_gear += 1
+        print(f"Current Gear: {self.current_gear}")
 
     def gear_down(self):
-        if self.current_gear > 0:
-            print("Shifting GEAR DOWN (Ch6: 1000 -> 1500)")
-            # Send 1000 on channel 6 for 0.5 seconds
-            self.send_throttle_pulse(channel=6, pwm_value=1000, duration=0.5)
-            # Then automatically returns to 1500 (neutral)
-            self.current_gear -= 1
-            print(f"Current Gear: {self.current_gear}")
-        else:
-            print("Already in lowest gear (0)")
+        print("Shifting GEAR DOWN")
+        self.send_gear_signal(1000)
+        self.current_gear -= 1
+        print(f"Current Gear: {self.current_gear}")
 
     def process_command(self, cmd):
         """Обробляє введені користувачем команди."""
@@ -223,8 +208,8 @@ class RoverController:
             print("GEAR DOWN")
             self.gear_down()
         elif cmd == 'test':
-            print("TEST: Sending PWM 2000 on channel 6 for 1 second")
-            self.send_throttle_pulse(channel=6, pwm_value=2000, duration=1.0)
+            print("TEST: Sending gear up signal")
+            self.send_gear_signal(2000)
         elif cmd == 'quit':
             print("Quitting...")
             self.running = False
@@ -250,7 +235,7 @@ class RoverController:
         print(" d = Right")
         print(" e = Gear Up")
         print(" q = Gear Down")
-        print(" test = Test throttle (Ch6=2000 for 1s)")
+        print(" test = Test gear signal (Ch6: 2000->1500)")
         print(" stop = STOP")
         print(" quit = Disarm and Exit")
         print(" (Ctrl+D = Disarm and Exit)")
