@@ -1,0 +1,25 @@
+{
+  "joystick": {
+    "throttle_axis": 1,
+    "steering_axis": 3,
+    "gear_up_button": 4,
+    "gear_down_button": 5,
+    "arm_button": 7,
+    "disarm_button": 6
+  },
+  "control": {
+    "deadzone": 0.5,
+    "invert_throttle": true,
+    "invert_steering": false,
+    "discrete_values": true
+  },
+  "rc_values": {
+    "min": 1000,
+    "neutral": 1500,
+    "max": 2000
+  },
+  "gear_bits": {
+    "gear_up": 11,
+    "gear_down": 12
+  }
+}
