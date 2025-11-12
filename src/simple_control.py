@@ -1,21 +1,21 @@
 import time
 from pymavlink import mavutil
 
-# --- КОНФІГУРАЦІЯ ---
+# --- CONFIGURATION ---
 SERIAL_PORT = '/dev/ttyS0'
 BAUD_RATE = 57600
 
-# Канали RC
-STEER_CHANNEL = 1       # Канал керування
-REVERSE_CHANNEL = 3     # Канал реверсу
-GEAR_CHANNEL = 6        # Канал передач
+# RC Channels
+STEER_CHANNEL = 1       # Steering channel
+REVERSE_CHANNEL = 3     # Reverse channel
+GEAR_CHANNEL = 6        # Gear channel
 
-# Значення PWM для керування
+# PWM values for steering
 STEER_LEFT = 1000
 STEER_RIGHT = 2000
 STEER_NEUTRAL = 1500
 
-# Значення PWM для передач
+# PWM values for gears
 GEAR_NEUTRAL = 1500
 GEAR_UP = 2000
 GEAR_DOWN = 1000
@@ -31,7 +31,6 @@ NO_OVERRIDE = 65535
 
 class SimpleRoverController:
     def __init__(self, port, baud):
-        """Встановлює з'єднання з MAVLink."""
         print(f"Connecting to {port} at {baud} baud...")
         self.master = mavutil.mavlink_connection(
             port, 
@@ -40,30 +39,30 @@ class SimpleRoverController:
             mavlink2=True
         )
         
-        # Чекаємо на перший HEARTBEAT
+        # Wait for first HEARTBEAT
         print("Waiting for vehicle heartbeat...")
         self.master.wait_heartbeat()
         print("Vehicle connected!")
         
-        # Поточний стан
+        # Current state
         self.current_gear = None
         self.running = True
-        self.steer_pwm = STEER_NEUTRAL  # Поточне значення керування
+        self.steer_pwm = STEER_NEUTRAL  # Current steering value
         self.drive_or_reverse = NEUTRAL_MOVEMENT
         
-        # Таймери для періодичних задач
+        # Timers for periodic tasks
         self.last_heartbeat_time = time.time()
         self.last_message_check_time = time.time()
         self.last_control_send_time = time.time()
         
-        # Стан активної команди передачі
+        # Active gear command state
         self.gear_command_active = False
         self.gear_command_channel = None
         self.gear_command_value = None
         self.gear_command_end_time = None
 
     def arm(self):
-        """Армує робота."""
+        """Arms the robot."""
         print("Attempting to ARM...")
         self.master.mav.command_long_send(
             self.master.target_system,
@@ -81,7 +80,7 @@ class SimpleRoverController:
             return False
 
     def disarm(self):
-        """Дизармує робота."""
+        """Disarms the robot."""
         print("Attempting to DISARM...")
         self.master.mav.command_long_send(
             self.master.target_system,
@@ -93,7 +92,7 @@ class SimpleRoverController:
         print(f"DISARMED. ACK: {ack}")
 
     def send_heartbeat(self):
-        """Надсилає HEARTBEAT повідомлення."""
+        """Sends HEARTBEAT message."""
         self.master.mav.heartbeat_send(
             mavutil.mavlink.MAV_TYPE_GCS,
             mavutil.mavlink.MAV_AUTOPILOT_INVALID,
@@ -102,7 +101,7 @@ class SimpleRoverController:
         self.last_heartbeat_time = time.time()
 
     def check_messages(self):
-        """Перевіряє вхідні повідомлення MAVLink."""
+        """Checks incoming MAVLink messages."""
         msg = self.master.recv_match(type='ESTIMATOR_STATUS', blocking=False)
         if msg and msg.vel_ratio != self.current_gear:
             print(f"\nGEAR UPDATE: {self.current_gear} -> {msg.vel_ratio}")
@@ -110,21 +109,21 @@ class SimpleRoverController:
         self.last_message_check_time = time.time()
 
     def send_control_signals(self):
-        """Відправляє єдину команду керування для всіх каналів."""
+        """Sends a single control command for all channels."""
         overrides = [NO_OVERRIDE] * 18
 
-        # Керування
+        # Steering
         overrides[STEER_CHANNEL - 1] = self.steer_pwm
         
-        # Рух
+        # Movement
         overrides[MOVING_CHANNEL - 1] = self.drive_or_reverse
 
-        # Передачі
+        # Gears
         if self.gear_command_active:
             if time.time() < self.gear_command_end_time:
                 overrides[self.gear_command_channel - 1] = self.gear_command_value
             else:
-                # Час вийшов, надсилаємо нейтраль і завершуєм
+                # Time is up, send neutral and finish
                 overrides[self.gear_command_channel - 1] = GEAR_NEUTRAL
                 print(f"Gear command complete. Channel {self.gear_command_channel} reset to {GEAR_NEUTRAL}")
                 self.gear_command_active = False
@@ -140,7 +139,7 @@ class SimpleRoverController:
         self.last_control_send_time = time.time()
 
     def start_gear_change(self, channel, value, duration=SENDING_TIME):
-        """Початок зміни передачі."""
+        """Start gear change."""
         print(f"Starting gear change: Channel {channel}, PWM {value}, Duration {duration}s")
         self.gear_command_active = True
         self.gear_command_channel = channel
@@ -148,12 +147,12 @@ class SimpleRoverController:
         self.gear_command_end_time = time.time() + duration
 
     def gear_up(self):
-        """Підвищення передачі."""
+        """Shift gear up."""
         print("Shifting GEAR UP")
         self.start_gear_change(GEAR_CHANNEL, GEAR_UP, SENDING_TIME)
 
     def gear_down(self):
-        """Зниження передачі."""
+        """Shift gear down."""
         print("Shifting GEAR DOWN")
         
         if self.current_gear is None:
@@ -164,7 +163,7 @@ class SimpleRoverController:
             self.start_gear_change(GEAR_CHANNEL, GEAR_DOWN, SENDING_TIME)
 
     def process_command(self, cmd):
-        """Обробляє введені команди."""
+        """Processes input commands."""
         if cmd == 'e':
             self.gear_up()
         elif cmd == 'q':
@@ -196,7 +195,7 @@ class SimpleRoverController:
             print("Unknown command")
 
     def run(self):
-        """Головний цикл управління."""
+        """Main control loop."""
         if not self.arm():
             self.running = False
             return
@@ -219,19 +218,19 @@ class SimpleRoverController:
             while self.running:
                 current_time = time.time()
                 
-                # 1. Надсилаємо heartbeat раз на секунду
+                # 1. Send heartbeat once per second
                 if current_time - self.last_heartbeat_time >= 1.0:
                     self.send_heartbeat()
                 
-                # 2. Перевіряємо вхідні повідомлення кожні 0.1 секунди
+                # 2. Check incoming messages every 0.1 seconds
                 if current_time - self.last_message_check_time >= 0.1:
                     self.check_messages()
                 
-                # 3. Надсилаємо об'єднані сигнали керування кожні 0.1 секунди
+                # 3. Send combined control signals every 0.1 seconds
                 if current_time - self.last_control_send_time >= 0.1:
                     self.send_control_signals()
                 
-                # 4. Перевіряємо введення користувача (неблокуюче)
+                # 4. Check user input (non-blocking)
                 import select
                 import sys
                 if select.select([sys.stdin], [], [], 0)[0]:
@@ -248,7 +247,7 @@ class SimpleRoverController:
         self.disarm()
         print("Controller stopped. Robot disarmed.")
 
-# --- Головний блок запуску ---
+# --- Main launch block ---
 if __name__ == "__main__":
     controller = SimpleRoverController(SERIAL_PORT, BAUD_RATE)
     controller.run()

@@ -3,28 +3,28 @@ import sys
 import threading
 from pymavlink import mavutil
 
-# --- КОНФІГУРАЦІЯ ---
+# --- CONFIGURATION ---
 SERIAL_PORT = '/dev/ttyS0'
 BAUD_RATE = 57600
 
-# Канали RC (з інформації від ментора)
-THROTTLE_CHANNEL = 6  # 6 канал вперед-назад
-STEER_CHANNEL = 1     # 1 канал вліво-вправо
+# RC Channels (from mentor's information)
+THROTTLE_CHANNEL = 6  # Channel 6 forward-backward
+STEER_CHANNEL = 1     # Channel 1 left-right
 
-# Значення PWM (з "default 1500")
+# PWM values (from "default 1500")
 NEUTRAL_PWM = 1500
 FORWARD_PWM = 2000
 BACKWARD_PWM = 1300
 LEFT_PWM = 1300
 RIGHT_PWM = 1700
 
-# Кнопки передач (з інформації від ментора)
+# Gear buttons (from mentor's information)
 GEAR_UP_BIT = 2048    # bit 11
 GEAR_DOWN_BIT = 4096  # bit 12
 
 class RoverController:
     def __init__(self, port, baud):
-        """Встановлює з'єднання з MAVLink."""
+        """Establishes connection with MAVLink."""
         print(f"Connecting to {port} at {baud} baud...")
         self.master = mavutil.mavlink_connection(
             port, 
@@ -33,12 +33,12 @@ class RoverController:
             mavlink2=True
         )
         
-        # Чекаємо на перший HEARTBEAT
+        # Wait for first HEARTBEAT
         print("Waiting for vehicle heartbeat...")
         self.master.wait_heartbeat()
         print("Vehicle connected!")
 
-        # Поточний стан керування
+        # Current control state
         self.throttle_pwm = NEUTRAL_PWM
         self.steer_pwm = NEUTRAL_PWM
 
@@ -51,16 +51,16 @@ class RoverController:
     
     def _message_listener_loop(self):
         """
-        (НОВИЙ ПОТІК)
-        Цей потік слухає вхідні повідомлення MAVLink у фоні.
-        Він шукає ESTIMATOR_STATUS, щоб отримати vel_ratio.
+        (NEW THREAD)
+        This thread listens to incoming MAVLink messages in the background.
+        It searches for ESTIMATOR_STATUS to get vel_ratio.
         """
         print("Starting message listener thread...")
         msg = 0
         while self.running:
-            # Ми чекаємо (blocking=True) на повідомлення типу ESTIMATOR_STATUS.
-            # Якщо повідомлення не прийде за 1.0 секунду (timeout),
-            # цикл просто повториться. Це ефективно і не вантажить CPU.
+            # We wait (blocking=True) for ESTIMATOR_STATUS message.
+            # If the message doesn't arrive within 1.0 seconds (timeout),
+            # the loop simply repeats. This is efficient and doesn't load the CPU.
             msg = self.master.recv_match(
                 type='ESTIMATOR_STATUS', 
                 blocking=True, 
@@ -68,7 +68,7 @@ class RoverController:
             )
             
             if not msg:
-                # Таймаут, повідомлення не надійшло, просто продовжуємо цикл
+                # Timeout, message didn't arrive, just continue the loop
                 continue
 
             if msg.vel_ratio != self.current_gear:
@@ -79,31 +79,31 @@ class RoverController:
 
     def _rc_override_loop(self):
         """
-        Ця функція працює у фоновому потоці.
-        Вона БЕЗПЕРЕРВНО надсилає стан джойстика (RC_CHANNELS_OVERRIDE).
-        Це критично, інакше робот активує failsafe.
+        This function runs in a background thread.
+        It CONTINUOUSLY sends joystick state (RC_CHANNELS_OVERRIDE).
+        This is critical, otherwise the robot will activate failsafe.
         """
         while self.running:
-            # Створюємо масив з 18 каналів, заповнений NEUTRAL_PWM
+            # Create an array of 18 channels filled with NEUTRAL_PWM
             overrides = [NEUTRAL_PWM] * 18
             
-            # Встановлюємо значення керма та газу
+            # Set steering and throttle values
             overrides[STEER_CHANNEL - 1] = self.steer_pwm
             overrides[THROTTLE_CHANNEL - 1] = self.throttle_pwm
             
-            # Надсилаємо повідомлення RC_CHANNELS_OVERRIDE (70)
+            # Send RC_CHANNELS_OVERRIDE message (70)
             self.master.mav.rc_channels_override_send(
                 self.master.target_system,
                 self.master.target_component,
                 *overrides
             )
-            time.sleep(0.1) # Надсилаємо 10 разів на секунду
+            time.sleep(0.1) # Send 10 times per second
 
     def _heartbeat_loop(self):
         """
-        Ця функція працює у фоновому потоці.
-        Вона БЕЗПЕРЕРВНО надсилає HEARTBEAT повідомлення раз на секунду.
-        Це необхідно для підтримки з'єднання з автопілотом.
+        This function runs in a background thread.
+        It CONTINUOUSLY sends HEARTBEAT message once per second.
+        This is necessary to maintain connection with the autopilot.
         """
         while self.running:
             self.master.mav.heartbeat_send(
@@ -113,27 +113,27 @@ class RoverController:
                 0,  # custom_mode
                 0   # system_status
             )
-            time.sleep(1.0)  # Надсилаємо 1 раз на секунду
+            time.sleep(1.0)  # Send once per second
 
     def send_pwm_pulse(self, channel_number, pwm_value, duration_sec=0.7):
         """
-        (НОВА ФУНКЦІЯ)
-        Надсилає імпульс PWM на вказаний канал протягом певного часу.
-        Інші канали під час імпульсу будуть в NEUTRAL_PWM (1500).
+        (NEW FUNCTION)
+        Sends a PWM pulse to the specified channel for a certain time.
+        Other channels during the pulse will be at NEUTRAL_PWM (1500).
         """
         print(f"Sending PWM pulse: {pwm_value} on Channel {channel_number} for {duration_sec}s")
         
-        # Створюємо масив з NEUTRAL_PWM (1500)
-        overrides = [NEUTRAL_PWM] * 18 
+        # Create an array with NEUTRAL_PWM (1500)
+        overrides = [NEUTRAL_PWM] * 18
         
-        # Встановлюємо цільове значення PWM (пам'ятаємо про індексацію з 0)
+        # Set target PWM value (remember zero-based indexing)
         overrides[channel_number - 1] = pwm_value
         
-        # Масив для повернення до нейтрального стану (всі 1500)
+        # Array for returning to neutral state (all 1500)
         neutral_overrides = [NEUTRAL_PWM] * 18
 
         start_time = time.time()
-        send_interval = 0.05  # Надсилаємо 20 разів на секунду
+        send_interval = 0.05  # Send 20 times per second
         last_send_time = 0
         
         while time.time() - start_time < duration_sec:
@@ -145,9 +145,9 @@ class RoverController:
                     *overrides
                 )
                 last_send_time = current_time
-            time.sleep(0.01) # Запобігаємо 100% завантаженню CPU
-        
-        # Повертаємо всі канали до NEUTRAL
+            time.sleep(0.01) # Prevent 100% CPU load
+
+        # Return all channels to NEUTRAL
         self.master.mav.rc_channels_override_send(
             self.master.target_system,
             self.master.target_component,
@@ -156,9 +156,9 @@ class RoverController:
         print(f"Pulse complete. Channel {channel_number} reset to {NEUTRAL_PWM}.")
 
     def _send_button_press(self, button_bitmask):
-        """Надсилає ОДНЕ повідомлення MANUAL_CONTROL (69) для імітації натискання кнопки."""
+        """Sends ONE MANUAL_CONTROL message (69) to simulate button press."""
         print(f"Sending button press: {button_bitmask}")
-        # Натискаємо кнопку
+        # Press button
         self.master.mav.manual_control_send(
             self.master.target_system,
             0, # x (pitch)
@@ -167,16 +167,16 @@ class RoverController:
             0, # r (yaw)
             button_bitmask # buttons
         )
-        # Чекаємо 0.1с
+        # Wait 0.1s
         time.sleep(0.1)
-        # Відпускаємо кнопку (надсилаємо 0)
+        # Release button (send 0)
         self.master.mav.manual_control_send(
             self.master.target_system, 0, 0, 0, 0, 0
         )
         print("Button released")
 
     def arm(self):
-        """Армує робота."""
+        """Arms the robot."""
         print("Attempting to ARM...")
         self.master.mav.command_long_send(
             self.master.target_system,
@@ -187,7 +187,7 @@ class RoverController:
             0, 0, 0, 0, 0, 0
         )
         
-        # Чекаємо на підтвердження
+        # Wait for acknowledgment
         ack = self.master.recv_match(type='COMMAND_ACK', blocking=True, timeout=5)
         if ack and ack.command == mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM and ack.result == 0:
             print("ARMED successfully!")
@@ -197,7 +197,7 @@ class RoverController:
             return False
 
     def disarm(self):
-        """Дизармує робота."""
+        """Disarms the robot."""
         print("Attempting to DISARM...")
         self.master.mav.command_long_send(
             self.master.target_system,
@@ -216,26 +216,26 @@ class RoverController:
 
     def gear_down(self):
         print("Shifting GEAR DOWN")
-        #ne pracuye
+        #not working
         if self.current_gear == 0.0:
-            # --- НОВА ЛОГІКА ДЛЯ РЕВЕРСУ ---
-            print("Поточна передача 0. Вмикаємо РЕВЕРС (Канал 3)...")
-            # Надсилаємо сигнал на Канал 3, PWM 1000
+            # --- NEW LOGIC FOR REVERSE ---
+            print("Current gear is 0. Engaging REVERSE (Channel 3)...")
+            # Send signal to Channel 3, PWM 1000
             self.send_pwm_pulse(channel_number=3, pwm_value=1000, duration_sec=0.7)
-            # Очікуємо, що танк повідомить про vel_ratio -1.0
-            
+            # Expect the tank to report vel_ratio -1.0
+
         elif self.current_gear > 0.0:
-            # --- СТАРА ЛОГІКА (звичайне зниження) ---
-            print(f"Поточна передача {self.current_gear}. Знижуємо (Канал 6)...")
-            # Надсилаємо сигнал на Канал 6, PWM 1000
+            # --- OLD LOGIC (normal downshift) ---
+            print(f"Current gear {self.current_gear}. Downshifting (Channel 6)...")
+            # Send signal to Channel 6, PWM 1000
             self.send_pwm_pulse(channel_number=6, pwm_value=1000, duration_sec=0.7)
         
         else:
-            # Це означає, що ми вже в реверсі (наприклад, -1.0)
-            print(f"Вже в режимі реверсу або неможлива передача ({self.current_gear}). Дій немає.")
+            # This means we're already in reverse (e.g., -1.0)
+            print(f"Already in reverse mode or impossible gear ({self.current_gear}). No action.")
 
     def process_command(self, cmd):
-        """Обробляє введені користувачем команди."""
+        """Processes user-entered commands."""
         if cmd == 'w':
             print("Moving FORWARD")
             self.throttle_pwm = FORWARD_PWM
@@ -270,18 +270,18 @@ class RoverController:
             print("Unknown command")
 
     def start(self):
-        """Головний цикл, який чекає на команди."""
+        """Main loop that waits for commands."""
         if not self.arm():
             self.running = False
             return
             
-        # Запускаємо фоновий потік для RC_CHANNELS_OVERRIDE
+        # Start background thread for RC_CHANNELS_OVERRIDE
         self.override_thread.start()
         
-        # Запускаємо фоновий потік для HEARTBEAT
+        # Start background thread for HEARTBEAT
         self.heartbeat_thread.start()
 
-        # Запускаємо фоновий потік для прослуховування повідомлень
+        # Start background thread for message listening
         self.message_listener_thread.start()
         
         print("\n--- Rover Control Ready ---")
@@ -300,7 +300,7 @@ class RoverController:
         
         try:
             while self.running:
-                # Чекаємо на інструкцію від користувача
+                # Wait for user instruction
                 cmd = input("Enter command: ").strip().lower()
                 self.process_command(cmd)
                 
@@ -312,7 +312,7 @@ class RoverController:
             self.running = False
 
     def stop(self):
-        """Зупиняє всі процеси та дизармить робота."""
+        """Stops all processes and disarms the robot."""
         print("Stopping controller...")
         self.running = False
         if self.override_thread.is_alive():
@@ -322,7 +322,7 @@ class RoverController:
         if self.message_listener_thread.is_alive():
             self.message_listener_thread.join()
         
-        # Встановлюємо нейтральні значення перед дизармом
+        # Set neutral values before disarming
         self.throttle_pwm = NEUTRAL_PWM
         self.steer_pwm = NEUTRAL_PWM
         self.master.mav.rc_channels_override_send(
@@ -334,12 +334,12 @@ class RoverController:
         self.disarm()
         print("Controller stopped. Robot disarmed.")
 
-# --- Головний блок запуску ---
+# --- Main launch block ---
 if __name__ == "__main__":
     controller = RoverController(SERIAL_PORT, BAUD_RATE)
     try:
         controller.start()
     finally:
-        # Цей блок 'finally' гарантує, що робот буде дизармлений
-        # навіть якщо програма впаде з помилкою.
+        # This 'finally' block ensures that the robot will be disarmed
+        # even if the program crashes with an error.
         controller.stop()
