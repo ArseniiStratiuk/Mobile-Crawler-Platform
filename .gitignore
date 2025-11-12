@@ -41,8 +41,10 @@
 *.dwo
 
 # build library
-build
+build/
 
 #logs
 *.tlog
 *.raw
+
+.idea/
