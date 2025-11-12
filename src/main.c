@@ -9,6 +9,7 @@
 #include <sys/select.h> // For select()
 #include <ctype.h>      // For tolower()
 #include <stdbool.h>    // For bool type
+#include <signal.h>     // For signal handling
 
 #include "common/mavlink.h"
 
@@ -81,10 +82,16 @@ void send_control_signals(RoverController* ctrl);
 void start_gear_change(RoverController* ctrl, uint8_t channel, uint16_t value, double duration);
 void gear_up(RoverController* ctrl);
 void gear_down(RoverController* ctrl);
-void process_command(RoverController* ctrl, const char* cmd);
+void process_command(RoverController* ctrl, char cmd);
 void print_help();
 int check_stdin_ready();
 void run_controller(RoverController* ctrl);
+void set_terminal_mode(bool raw);
+void signal_handler(int signum);
+
+// Global terminal settings for restoration
+struct termios original_terminal;
+bool terminal_modified = false;
 
 // Get current time in seconds (with decimal precision)
 double get_time() {
@@ -388,40 +395,45 @@ void gear_down(RoverController* ctrl) {
 }
 
 // Process user command
-void process_command(RoverController* ctrl, const char* cmd) {
-    if (strcmp(cmd, "e") == 0) {
+void process_command(RoverController* ctrl, char cmd) {
+    // Convert to lowercase
+    cmd = tolower(cmd);
+    
+    if (cmd == 'e') {
         gear_up(ctrl);
-    } else if (strcmp(cmd, "q") == 0) {
+    } else if (cmd == 'q') {
         gear_down(ctrl);
-    } else if (strcmp(cmd, "a") == 0) {
+    } else if (cmd == 'a') {
         printf("Turning LEFT\n");
         ctrl->steer_pwm = STEER_LEFT;
-    } else if (strcmp(cmd, "d") == 0) {
+    } else if (cmd == 'd') {
         printf("Turning RIGHT\n");
         ctrl->steer_pwm = STEER_RIGHT;
-    } else if (strcmp(cmd, "s") == 0) {
+    } else if (cmd == 's') {
         printf("Steering NEUTRAL\n");
         ctrl->steer_pwm = STEER_NEUTRAL;
-    } else if (strcmp(cmd, "gear") == 0) {
+    } else if (cmd == 'g') {
         if (ctrl->gear_known) {
             printf("Current reported gear: %.2f\n", ctrl->current_gear);
         } else {
             printf("Current reported gear: unknown\n");
         }
-    } else if (strcmp(cmd, "quit") == 0) {
-        printf("Quitting...\n");
-        ctrl->running = false;
-    } else if (strcmp(cmd, "w") == 0) {
+    } else if (cmd == 'h') {
+        print_help();
+    } else if (cmd == 'w') {
         ctrl->drive_or_reverse = FORWARD_MOVEMENT;
         printf("Moving forward...\n");
-    } else if (strcmp(cmd, "r") == 0) {
+    } else if (cmd == 'r') {
         ctrl->drive_or_reverse = REVERSE_MOVEMENT;
         printf("Moving reverse...\n");
-    } else if (strcmp(cmd, "x") == 0) {
+    } else if (cmd == 'x') {
         ctrl->drive_or_reverse = NEUTRAL_MOVEMENT;
         printf("Neutral moving...\n");
-    } else {
-        printf("Unknown command\n");
+    } else if (cmd == 27) {  // ESC key
+        printf("Quitting...\n");
+        ctrl->running = false;
+    } else if (cmd != '\n' && cmd != '\r') {
+        printf("Unknown command: '%c' (press 'h' for help)\n", cmd);
     }
 }
 
@@ -433,12 +445,50 @@ void print_help() {
     printf(" a = Steer Left\n");
     printf(" d = Steer Right\n");
     printf(" s = Steer Neutral\n");
-    printf(" gear = Show current gear\n");
-    printf(" quit = Disarm and Exit\n");
-    printf(" w = move forward\n");
-    printf(" r = move backward\n");
-    printf(" x = stop moving\n");
+    printf(" g = Show current gear\n");
+    printf(" w = Move forward\n");
+    printf(" r = Move backward\n");
+    printf(" x = Stop moving\n");
+    printf(" h = Show this help\n");
+    printf(" ESC = Disarm and Exit\n");
     printf("---------------------------\n\n");
+}
+
+// Signal handler to restore terminal on Ctrl+C
+void signal_handler(int signum) {
+    if (terminal_modified) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal);
+        terminal_modified = false;
+    }
+    printf("\n\nTerminal restored. Exiting...\n");
+    exit(signum);
+}
+
+// Set terminal to raw mode (immediate key capture) or restore original mode
+void set_terminal_mode(bool raw) {
+    static struct termios raw_terminal;
+    
+    if (raw) {
+        // Save original terminal settings
+        tcgetattr(STDIN_FILENO, &original_terminal);
+        
+        // Configure raw mode
+        raw_terminal = original_terminal;
+        raw_terminal.c_lflag &= ~(ICANON | ECHO); // Disable canonical mode and echo
+        raw_terminal.c_cc[VMIN] = 0;  // Non-blocking read
+        raw_terminal.c_cc[VTIME] = 0;
+        
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw_terminal);
+        terminal_modified = true;
+        
+        // Set up signal handler for Ctrl+C
+        signal(SIGINT, signal_handler);
+        signal(SIGTERM, signal_handler);
+    } else {
+        // Restore original terminal settings
+        tcsetattr(STDIN_FILENO, TCSANOW, &original_terminal);
+        terminal_modified = false;
+    }
 }
 
 // Check if stdin has data ready (non-blocking)
@@ -462,10 +512,12 @@ void run_controller(RoverController* ctrl) {
         return;
     }
     
+    // Set terminal to raw mode for immediate key capture
+    set_terminal_mode(true);
+    
     print_help();
     printf("Target: sys=%d, comp=%d\n\n", ctrl->target_system, ctrl->target_component);
-    
-    char input_buffer[256];
+    printf("Ready for input (press keys immediately, no Enter needed)...\n\n");
     
     while (ctrl->running) {
         double current_time = get_time();
@@ -487,28 +539,18 @@ void run_controller(RoverController* ctrl) {
         
         // 4. Check for user input (non-blocking)
         if (check_stdin_ready()) {
-            if (fgets(input_buffer, sizeof(input_buffer), stdin) != NULL) {
-                // Remove trailing newline
-                input_buffer[strcspn(input_buffer, "\n")] = 0;
-                
-                // Convert to lowercase
-                for (int i = 0; input_buffer[i]; i++) {
-                    input_buffer[i] = tolower(input_buffer[i]);
-                }
-                
-                // Trim leading/trailing whitespace
-                char* cmd = input_buffer;
-                while (*cmd == ' ' || *cmd == '\t') cmd++;
-                
-                if (strlen(cmd) > 0) {
-                    process_command(ctrl, cmd);
-                }
+            char c;
+            if (read(STDIN_FILENO, &c, 1) > 0) {
+                process_command(ctrl, c);
             }
         }
         
         // Sleep for 50ms
         usleep(50000);
     }
+    
+    // Restore terminal to normal mode
+    set_terminal_mode(false);
     
     disarm_vehicle(ctrl);
     printf("Controller stopped. Robot disarmed.\n");
