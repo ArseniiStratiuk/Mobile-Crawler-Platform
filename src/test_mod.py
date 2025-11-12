@@ -14,6 +14,9 @@ class MAVLinkTester:
         # Wait for the first heartbeat message to confirm connection
         self.m.wait_heartbeat(timeout=5)
         print("Vehicle connected.")
+        
+        # Track last heartbeat time
+        self.last_heartbeat_time = time.time()
 
     def send_gcs_heartbeat(self):
         # Send a GCS heartbeat to identify this script to the vehicle
@@ -24,6 +27,13 @@ class MAVLinkTester:
             custom_mode=0,
             system_status=0
         )
+        self.last_heartbeat_time = time.time()
+    
+    def send_heartbeat_if_needed(self):
+        # Send heartbeat at least once per second
+        current_time = time.time()
+        if current_time - self.last_heartbeat_time >= 1.0:
+            self.send_gcs_heartbeat()
 
     def send_command(self, command, params=(0,0,0,0,0,0,0), target_component=1):
         # Send a MAV_CMD_COMMAND_LONG message
@@ -69,12 +79,15 @@ class MAVLinkTester:
         while time.time() - start_time < duration:
             current_time = time.time()
             
-            # 1. Send the override command *continuously*
+            # 1. Send heartbeat if needed
+            self.send_heartbeat_if_needed()
+            
+            # 2. Send the override command *continuously*
             if current_time - last_send_time > send_interval:
                 self.m.mav.rc_channels_override_send(1, 1, *overrides)
                 last_send_time = current_time
 
-            # 2. Listen for ANY message
+            # 3. Listen for ANY message
             msg = self.m.recv_match(blocking=False)
             if msg and msg.get_type() != 'BAD_DATA':
                 msg_type = msg.get_type()
@@ -110,7 +123,7 @@ class MAVLinkTester:
 
             time.sleep(0.01)  # Prevent 100% CPU usage
 
-        # 3. After the loop, send a command to clear all overrides back to default
+        # 4. After the loop, send a command to clear all overrides back to default
         self.m.mav.rc_channels_override_send(1, 1, *([pwm_default]*18))
         print(f"--- Button Released (Ch{channel}={pwm_default}) ---")
 
