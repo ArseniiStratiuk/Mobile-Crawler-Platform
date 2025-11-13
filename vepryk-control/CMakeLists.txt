@@ -51,7 +51,7 @@ target_link_libraries(test_network network common)
 add_executable(test_joystick
     input/test_joystick.cpp
 )
-target_link_libraries(test_joystick input ${SDL2_LIBRARIES})
+target_link_libraries(test_joystick input common ${SDL2_LIBRARIES})
 
 # Copy config.json to build directory automatically
 configure_file(

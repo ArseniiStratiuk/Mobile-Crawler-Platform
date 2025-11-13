@@ -13,10 +13,6 @@ JoystickHandler::~JoystickHandler() {
     cleanup();
 }
 
-bool JoystickHandler::loadConfig(const std::string& config_file) {
-    return config.loadFromFile(config_file);
-}
-
 void JoystickHandler::setConfig(const JoystickConfig& cfg) {
     config = cfg;
 }
