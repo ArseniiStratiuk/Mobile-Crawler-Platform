@@ -25,8 +25,8 @@
   "network": {
     "host": "127.0.0.1",
     "port": 14550,
-    "ssh_user": "pi",
-    "ssh_host": "raspberry.local",
+    "ssh_user": "platform",
+    "ssh_host": "tank.local",
     "ssh_port": 22
   }
 }

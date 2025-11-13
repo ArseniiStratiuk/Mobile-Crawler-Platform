@@ -6,6 +6,10 @@
 #include <signal.h>
 #include <sys/time.h>
 
+// Raspberry:   mavproxy.py --master=/dev/ttyS0 --baudrate=57600 --out=tcpin:0.0.0.0:14550
+// Local:       ssh -L 14550:localhost:14550 platform@tank.local
+
+
 volatile bool running = true;
 
 double get_time() {
