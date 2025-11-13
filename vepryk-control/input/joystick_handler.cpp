@@ -17,6 +17,10 @@ bool JoystickHandler::loadConfig(const std::string& config_file) {
     return config.loadFromFile(config_file);
 }
 
+void JoystickHandler::setConfig(const JoystickConfig& cfg) {
+    config = cfg;
+}
+
 bool JoystickHandler::init() {
     if (SDL_Init(SDL_INIT_JOYSTICK) < 0) {
         fprintf(stderr, "SDL_Init failed: %s\\n", SDL_GetError());

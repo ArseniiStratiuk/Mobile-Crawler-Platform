@@ -15,6 +15,9 @@ public:
     // Call before init() to use custom config
     bool loadConfig(const std::string& config_file);
     
+    // Set configuration directly from loaded values
+    void setConfig(const JoystickConfig& cfg);
+    
     // Initialize SDL2 and open first available joystick
     // Returns: true on success, false if no joystick found
     bool init();

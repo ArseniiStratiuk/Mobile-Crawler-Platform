@@ -22,10 +22,24 @@ struct GearBits {
     int gear_down;
 };
 
+struct JoystickControlConfig {
+    int throttle_axis;
+    int steering_axis;
+    int gear_up_button;
+    int gear_down_button;
+    int arm_button;
+    int disarm_button;
+    float deadzone;
+    bool invert_throttle;
+    bool invert_steering;
+    bool discrete_values;
+};
+
 struct VeprykConfig {
     NetworkConfig network;
     RCValues rc_values;
     GearBits gear_bits;
+    JoystickControlConfig joystick;
 };
 
 // Load complete configuration from JSON file

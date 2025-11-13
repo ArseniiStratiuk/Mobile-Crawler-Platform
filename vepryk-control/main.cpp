@@ -51,10 +51,41 @@ int main(int argc, char* argv[]) {
     
     // Initialize input
     JoystickHandler joystick;
+    
+    // Convert config to JoystickConfig format
+    JoystickConfig joy_cfg;
+    joy_cfg.throttle_axis = config.joystick.throttle_axis;
+    joy_cfg.steering_axis = config.joystick.steering_axis;
+    joy_cfg.gear_up_button = config.joystick.gear_up_button;
+    joy_cfg.gear_down_button = config.joystick.gear_down_button;
+    joy_cfg.arm_button = config.joystick.arm_button;
+    joy_cfg.disarm_button = config.joystick.disarm_button;
+    joy_cfg.deadzone = config.joystick.deadzone;
+    joy_cfg.invert_throttle = config.joystick.invert_throttle;
+    joy_cfg.invert_steering = config.joystick.invert_steering;
+    joy_cfg.discrete_values = config.joystick.discrete_values;
+    joy_cfg.rc_min = config.rc_values.min;
+    joy_cfg.rc_neutral = config.rc_values.neutral;
+    joy_cfg.rc_max = config.rc_values.max;
+    joy_cfg.gear_up_bit = config.gear_bits.gear_up;
+    joy_cfg.gear_down_bit = config.gear_bits.gear_down;
+    
+    joystick.setConfig(joy_cfg);
+    
     if (!joystick.init()) {
         fprintf(stderr, "Failed to initialize joystick\n");
         return 1;
     }
+    
+    printf("Joystick configured:\n");
+    printf("  Axes: throttle=%d, steering=%d\n", 
+           config.joystick.throttle_axis, config.joystick.steering_axis);
+    printf("  Buttons: gear_up=%d, gear_down=%d, arm=%d, disarm=%d\n",
+           config.joystick.gear_up_button, config.joystick.gear_down_button,
+           config.joystick.arm_button, config.joystick.disarm_button);
+    printf("  Control: deadzone=%.2f, invert_throttle=%d, discrete=%d\n\n",
+           config.joystick.deadzone, config.joystick.invert_throttle, 
+           config.joystick.discrete_values);
     
     // Initialize network with config values
     MAVLinkSender sender(config.rc_values, config.gear_bits);
