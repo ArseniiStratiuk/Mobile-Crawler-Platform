@@ -1,40 +1,75 @@
 cmake_minimum_required(VERSION 3.10)
-project(VepRykControl)
+project(VeprykControl CXX)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Add compiler flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -O2")
+add_compile_options(-Wall -Wextra -O3)
 
 # Find SDL2 package
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED sdl2)
 
 # Include directories
+include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/common)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../headers)
 include_directories(${SDL2_INCLUDE_DIRS})
 
-# Joystick handler library
-add_library(joystick_handler 
+# Common library (config loader)
+add_library(common
+    common/config_loader.cpp
+)
+
+# Network library (MAVLink sender + SSH bridge)
+add_library(network
+    network/ssh_bridge.cpp
+    network/mavlink_sender.cpp
+)
+
+# Input library (Joystick handler)
+add_library(input
     input/joystick_handler.cpp
 )
-target_link_libraries(joystick_handler ${SDL2_LIBRARIES})
+target_link_libraries(input ${SDL2_LIBRARIES})
 
-# Test joystick executable
-add_executable(test_joystick 
+# Main executable
+add_executable(vepryk_control
+    main.cpp
+)
+target_link_libraries(vepryk_control network input common ${SDL2_LIBRARIES})
+
+# Network test executable
+add_executable(test_network
+    network/test_network.cpp
+)
+target_link_libraries(test_network network common)
+
+# Joystick test executable
+add_executable(test_joystick
     input/test_joystick.cpp
 )
-target_link_libraries(test_joystick joystick_handler ${SDL2_LIBRARIES})
+target_link_libraries(test_joystick input ${SDL2_LIBRARIES})
 
 # Copy config.json to build directory automatically
 configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/input/config.json
+    ${CMAKE_CURRENT_SOURCE_DIR}/config.json
     ${CMAKE_CURRENT_BINARY_DIR}/config.json
     COPYONLY
 )
 
-message(STATUS "Building VepRyk Control")
-message(STATUS "SDL2 version: ${SDL2_VERSION}")
-message(STATUS "Config file will be copied to build directory")
+# Installation
+install(TARGETS vepryk_control test_network test_joystick
+    RUNTIME DESTINATION bin
+)
+install(FILES config.json
+    DESTINATION bin
+)
+
+message(STATUS "Building Vepryk Control System")
+message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
+message(STATUS "  MAVLink headers: ${CMAKE_CURRENT_SOURCE_DIR}/../headers")
+message(STATUS "  SDL2 version: ${SDL2_VERSION}")
+message(STATUS "  Config file: config.json")
