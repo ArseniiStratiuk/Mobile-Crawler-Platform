@@ -10,7 +10,7 @@
   "control": {
     "deadzone": 0.5,
     "invert_throttle": true,
-    "invert_steering": false,
+    "invert_steering": true,
     "discrete_values": true
   },
   "rc_values": {
