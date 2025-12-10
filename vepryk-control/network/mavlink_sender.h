@@ -34,6 +34,13 @@ public:
     // Disconnect
     void disconnect();
     
+    // Access to bridge for receiver thread
+    SSHBridge* getBridge() { return &bridge; }
+    
+    // Get current gear (from ESTIMATOR_STATUS)
+    float getCurrentGear() const { return current_gear; }
+    bool isGearKnown() const { return gear_known; }
+    
 private:
     SSHBridge bridge;
     
