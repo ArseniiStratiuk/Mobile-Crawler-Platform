@@ -331,11 +331,9 @@ class AprilTagFollower:
             '-s', f'{self.stream_width}x{self.stream_height}',
             '-r', '30',
             '-i', '-',
-            '-vcodec', 'libx264',
+            '-c:v', 'libx264',
             '-preset', 'ultrafast',
             '-tune', 'zerolatency',
-            '-g', '10',
-            '-bf', '0',
             '-f', 'mpegts',
             f'tcp://0.0.0.0:{STREAM_PORT}?listen=1'
         ]
@@ -344,7 +342,7 @@ class AprilTagFollower:
             self.ffmpeg_process = subprocess.Popen(
                 ffmpeg_cmd,
                 stdin=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
                 stdout=subprocess.DEVNULL
             )
             self.stream_ready.set()
