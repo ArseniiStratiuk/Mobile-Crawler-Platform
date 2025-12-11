@@ -29,7 +29,7 @@ Open a terminal on your host computer and connect via SSH:
 ```bash
 ssh platform@tank.local
 ```
-**Password:** `best2025`
+**Password:** `The password on your Raspberry Pi`
 
 ### 3. Initialize Onboard Systems
 Once logged into the Raspberry Pi, execute the following commands to set up the environment and start the MAVLink bridge:
