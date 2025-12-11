@@ -1,3 +1,4 @@
+
 # Vepryk 6+ Mobile Crawler Platform
 
 ## Overview
@@ -108,3 +109,4 @@ The default joystick mapping (configurable in `config.json`) is:
 *   **Disarm:** Button 6
 
 > **Note:** Ensure that the camera software and MAVLink proxy are running on the Raspberry Pi before starting the GUI or video stream on your host machine.
+
